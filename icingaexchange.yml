@@ -1,6 +1,7 @@
 name: check_pycurl
 description: "file:///README.md"
 url: "https://github.com/akrus/check_pycurl"
+tags: HTTP
 vendor: Linux	
 target: Website
 type: Plugin
