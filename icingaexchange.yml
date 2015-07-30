@@ -1,0 +1,17 @@
+name: check_pycurl
+description: "file:///README.md"
+url: "https://github.com/akrus/check_pycurl"
+vendor: Linux	
+target: Website
+type: Plugin
+license: gplv3
+releases: 
+  - 
+    name: 1.1
+    description: "1.1 Release"
+    files: 
+      - 
+        name: check_pycurl
+        url: "file:///check_pycurl"
+        description: "Version 1.1"
+        checksum: ba6aba3f7116d132c508dec8d39fa4e0

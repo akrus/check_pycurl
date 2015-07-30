@@ -2,7 +2,7 @@
 
 # check_pycurl ; -*-Python-*-
 # Copyright James Powell 2013 / jamespo [at] gmail [dot] com
-# Modified version © akrus. 2015 / akrus [at] flygroup [dot] st
+# Modified version: Copyright. akrus. 2015 / akrus [at] flygroup [dot] st
 ### Changelog:
 ### v1.1 2015-07-30
 ### - Feature: added header option for configuration file
