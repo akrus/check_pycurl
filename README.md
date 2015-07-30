@@ -5,16 +5,18 @@ INTRODUCTION
 ------------
 
 A nagios / icinga / shinken plugin to check HTTP requests
+
 Written in python. Licensed under GPL v3
+
 Copyright James Powell 2013
 
 DEPENDENCIES
 ------------
 
 python 2.x with modules:
-pycurl
-yaml
-dnspython
+* pycurl
+* yaml
+* dnspython
 
 INSTALLATION
 ------------
