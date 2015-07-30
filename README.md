@@ -50,6 +50,7 @@ An alternate test is for presence of regex in the output (--test regex:t.st)
 EXAMPLE RUNFILE
 ---------------
 
+```
 cookiejar: no
 
 urls:
@@ -57,11 +58,12 @@ urls:
     test: code:200
   - url: http://yahoo.com
     test: code:301
-
+```
 
 NAGIOS CONFIGURATION
 --------------
 
+```
 # simple configuration just for HTTP 200 check 
 define command {
 	command_name	check_pycurl
@@ -89,3 +91,4 @@ define service {
         service_description             Roundcube Login Check
         check_command                   check_pycurl_rf!/opt/nagios/pyc_rf/rc.yml
 }
+```
