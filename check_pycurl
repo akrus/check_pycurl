@@ -2,9 +2,22 @@
 
 # check_pycurl ; -*-Python-*-
 # Copyright James Powell 2013 / jamespo [at] gmail [dot] com
+# Modified version © akrus. 2015 / akrus [at] flygroup [dot] st
+### Changelog:
+### v1.1 2015-07-30
+### - Feature: added header option for configuration file
+### - Feature: custom IP addresses can be provided (ignores resolver)
+### - Feature: rely on dnspython for non-caching DNS requests
+### - Feature: added labels for performance data
+### - Feature: added extended logging (/var/log/pycurl)
+### - Change: increased timeouts
 # This program is distributed under the terms of the GNU General Public License v3
 
 import pycurl
+import dns.resolver
+import time
+import pprint
+from urlparse import urlparse
 import cStringIO
 import uuid
 import sys, os
@@ -14,19 +27,23 @@ import urllib
 import copy
 from optparse import OptionParser
 
+global log_dir
+log_dir = "/var/log/pycurl"
+
 class CheckPyCurlOptions(object):
     '''class to contain check options for multi-mode'''
     def __init__(self):
         # set defaults if not present (TODO: set these in one place)
         self.test = 'code:200'
-        self.connecttimeout = 5
-        self.timeout = 10
+        self.connecttimeout = 15
+        self.timeout = 30
         self.location = False
         self.insecure = False
         self.proxy = None
         self.postdata = None
         self.failaterror = True
-
+	self.label = None
+	self.header = None
 
 class CheckPyCurlMulti(object):
     def __init__(self, runfile):
@@ -61,8 +78,14 @@ class CheckPyCurlMulti(object):
                 # loop round urls in object & create checkobjects
                 for url in runyaml['urls']:
                     local_options = copy.copy(global_options)
+		    if 'header' not in url:
+			local_options.header = ""
                     for opt in url:
                         setattr(local_options, opt, url[opt])
+		    if hosts:
+			local_options.hosts = hosts
+		    else:
+			local_options.hosts = []
                     self.checkobjs.append(local_options)
             else:
                 setattr(global_options, global_opt, runyaml[global_opt])
@@ -72,10 +95,24 @@ class CheckPyCurlMulti(object):
         cpc = None
         search_results = {}
         total_req_time = 0
+	global tmp_perfdata
+	tmp_perfdata = ""
         for (counter, checkobj) in enumerate(self.checkobjs):
             cpc = CheckPyCurl(options=checkobj, prev_matches=search_results)
             rc = cpc.curl()
             cpc.results['stage'] = counter
+	    ### EXTENDED MODE
+	    connecttime = cpc.results['connecttime'] - cpc.results['curlnamelookuptime']
+	    if cpc.results['appconnecttime'] != 0:
+		appconnecttime = cpc.results['appconnecttime'] - cpc.results['connecttime']
+		pretransfertime = cpc.results['pretransfertime'] - cpc.results['appconnecttime']
+	    else:
+		appconnecttime = 0
+		pretransfertime = cpc.results['pretransfertime'] - cpc.results['connecttime']
+	    starttransfertime = cpc.results['starttransfertime'] - cpc.results['pretransfertime']
+	    totaltime = cpc.results['totaltime'] - cpc.results['starttransfertime']
+	    tmp_perfdata += checkobj.label + "_namelookup_time=" + str(format(cpc.results['namelookuptime'], 'f')) + " " + checkobj.label + "_connect_time=" + str(format(connecttime,'f')) + " " + checkobj.label + "_appconnect_time=" + str(format(appconnecttime,'f')) + " " + checkobj.label + "_pretransfer_time=" + str(format(pretransfertime,'f')) + " " + checkobj.label + "_starttransfer_time=" + str(format(starttransfertime,'f')) + " " + checkobj.label + "_total_time=" + str(format(totaltime,'f')) + " "
+	    ### EXTENDED MODE
             total_req_time += cpc.results['totaltime'] # store running total of req time
             cpc.results['totaltime'] = total_req_time
             if rc != 0 and checkobj.failaterror:
@@ -104,6 +141,39 @@ class CheckPyCurl(object):
         c.setopt(c.TIMEOUT, self.options.timeout)
         c.setopt(c.FOLLOWLOCATION, self.options.location)
         c.setopt(c.SSL_VERIFYPEER, self.options.insecure)
+	url_result = urlparse(self.options.url)
+	global start_dns_resolve
+	start_dns_resolve = time.clock()
+	try:
+	    resolve_result = dns.resolver.query(url_result[1], 'A')
+	except dns.resolver.NXDOMAIN:
+            print "DNS error: no such domain %s" % url_result[1]
+	    exit(2)
+	except dns.resolver.NoNameservers:
+            print "DNS error: no name servers can be used to resolve %s" % url_result[1]
+	    exit(2)
+	except dns.resolver.Timeout:
+	    print "DNS error: timed out while resolving %s" % url_result[1]
+	    exit(2)
+	global end_dns_resolve
+	end_dns_resolve = time.clock()
+	for rdata in resolve_result:
+	    dns_name = rdata
+	    break
+	host_flag = 0
+	for host in self.options.hosts:
+	    option_result = host.split(':')
+	    if url_result[0] == "https":
+		url_port = "443"
+	    else:
+		url_port = "80"
+	    if option_result[0] == url_result[1] and option_result[1] == url_port:
+		host_flag = 1
+	if host_flag != 1:
+	    self.options.hosts.append(str(url_result[1]) + ":" + ("80", "443")[url_result[0]=="https"] + ":" + str(dns_name))
+	if self.options.header:
+	    c.setopt(c.HTTPHEADER, [ self.options.header ])
+	c.setopt(c.RESOLVE, self.options.hosts)
         if getattr(self.options, 'cookiejar', False):
             c.setopt(pycurl.COOKIEJAR, self.options.tmpfile)
             c.setopt(pycurl.COOKIEFILE, self.options.tmpfile)
@@ -130,17 +200,22 @@ class CheckPyCurl(object):
 
     def curl(self):
         '''make the request'''
+        hdr = cStringIO.StringIO()
         buf = cStringIO.StringIO()
+	self.content = buf.getvalue()
+	self.headers = hdr.getvalue()
         # create object & set options
         c = self.create_curl_obj()
+        c.setopt(c.HEADERFUNCTION, hdr.write)
         c.setopt(c.WRITEFUNCTION, buf.write)
         # send the request
         try:
             c.perform()
             self.content = buf.getvalue()
+            self.headers = hdr.getvalue()
             # print self.content
             self.results['rc'] = 0
-            self.results['status'] = "%s returned HTTP %s" % (self.options.url,
+            self.results['status'] = "%s (%s) returned HTTP %s" % (self.options.url, self.options.hosts,
                                       c.getinfo(pycurl.HTTP_CODE))
             # check results
             if self.successtest == 'code':
@@ -149,23 +224,30 @@ class CheckPyCurl(object):
             elif self.successtest == 'regex':
                 search_res = re.search(self.successcheck, self.content, re.MULTILINE)
                 if  search_res is not None:
-                    self.results['status'] = "%s found in %s" % (self.successcheck,
-                                         self.options.url)
+                    self.results['status'] = "%s found in %s (%s)" % (self.successcheck,
+                                         self.options.url, self.options.hosts)
                     self.results['rc'] = 0
                     # store match result for possible later use
                     self.results['search_res'] = search_res
                 else:
-                    self.results['status'] = "%s not found in %s" % (self.successcheck,
-                                             self.options.url)
+                    self.results['status'] = "%s not found in %s (%s)" % (self.successcheck,
+                                             self.options.url, self.options.hosts)
                     self.results['rc'] = 2
             else:
                 self.results['rc'] = 1
         except pycurl.error, excep:
             self.results['rc'] = 2
-            self.results['status'] = excep[1]
+            self.results['status'] = excep[1] + " (%s)" % (self.options.hosts)
 
+	hdr.close()
         buf.close()
 
+        self.results['curlnamelookuptime'] = c.getinfo(pycurl.NAMELOOKUP_TIME)
+        self.results['namelookuptime'] = end_dns_resolve - start_dns_resolve
+        self.results['connecttime'] = c.getinfo(pycurl.CONNECT_TIME)
+        self.results['appconnecttime'] = c.getinfo(pycurl.APPCONNECT_TIME)
+        self.results['pretransfertime'] = c.getinfo(pycurl.PRETRANSFER_TIME)
+        self.results['starttransfertime'] = c.getinfo(pycurl.STARTTRANSFER_TIME)
         self.results['totaltime'] = c.getinfo(pycurl.TOTAL_TIME)
         return self.results['rc']
 
@@ -177,11 +259,16 @@ def checkargs(options):
     else:
         return (0, '')
 
+def convert_hosts(option, opt, value, parser):
+    setattr(parser.values, option.dest, value.split(','))
+
 def get_cli_options():
     '''get command line options & return OptionParser'''
     parser = OptionParser()
+    parser.host = None
     parser.add_option("-u", "--url", dest="url")
     parser.add_option("-f", "--runfile", dest="runfile")
+    parser.add_option("-H", "--hosts", type="string", action="append", default=[], dest="hosts")
     parser.add_option("--test", dest="test",
                       default="code:200", help="[code:HTTPCODE|regex:REGEX]")
     parser.add_option("--connect-timeout", dest="connecttimeout",
@@ -205,9 +292,12 @@ def main():
             cpc = CheckPyCurl(options)
             rc = cpc.curl()
             rcstr = 'OK:' if rc == 0 else 'CRITICAL:'
-            rcstr = rcstr + ' ' + cpc.results['status'] + " | request_time=" + str(cpc.results['totaltime'])
+            rcstr = rcstr + ' ' + cpc.results['status'] + " | namelookup_time=" + str(cpc.results['namelookuptime']) + " connect_time=" + str(cpc.results['connecttime']) + " appconnect_time=" + str(cpc.results['appconnecttime']) + " request_time=" + str(cpc.results['totaltime'])
         else:
             # runfile
+	    if options.hosts != False:
+		global hosts
+		hosts = options.hosts
             a = CheckPyCurlMulti(options.runfile)
             a.parse_runfile()
             cpc = a.check_runfile()
@@ -217,7 +307,15 @@ def main():
             else:
                 rcstr = 'CRITICAL: Stage %s - %s (should be %s)' % \
                 (cpc.results['stage'], cpc.results['status'], cpc.options.test)
-            rcstr += " | request_time=" + str(cpc.results['totaltime'])
+		if not os.path.exists(log_dir):
+			os.makedirs(log_dir)
+		f = open(log_dir + "/" + time.strftime("%Y%m%d%H%M%S") + ".log","a")
+		f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+		f.write(rcstr + "\n")
+		f.write(cpc.headers)
+		f.write(cpc.content)
+		f.close()
+	    rcstr += " | " + tmp_perfdata
     print rcstr
     sys.exit(rc)
 
