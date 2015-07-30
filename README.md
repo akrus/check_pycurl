@@ -25,6 +25,7 @@ configure in nagios (see NAGIOS CONFIGURATION).
 USAGE
 ------------
 
+```
 Usage: check_pycurl [options]
 
 Options:
@@ -37,6 +38,7 @@ Options:
   --proxy=PROXY
   --location            Follow redirects
   --insecure
+```
 
 check_pycurl can run in one of two ways, a simple one-off http check (specify the url with -u)
 or with a runfile which is written in yaml and can be used to specify multi-stage url checks (eg
